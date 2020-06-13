@@ -5,8 +5,9 @@
 #include <utility>
 #include <list>
 #include <memory>
+#include <array>
 
-namespace dependency
+namespace dtrack
 {
   namespace detail
   {
@@ -14,26 +15,9 @@ namespace dependency
       virtual void Invalidate() = 0;
     };
 
-    template <class F, class Tuple, std::size_t... I>
-    constexpr decltype(auto) apply_impl(F&& f, Tuple&& t, std::index_sequence<I...>)
-    {
-      return std::invoke(std::forward<F>(f), std::get<I>(std::forward<Tuple>(t))...);
-    }
-
-    template <class F, class Tuple>
-    constexpr decltype(auto) apply(F&& f, Tuple&& t)
-    {
-      return apply_impl(
-        std::forward<F>(f), std::forward<Tuple>(t),
-        std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<Tuple>>>{});
-    }
-
     struct ValueSharedBlockBase {
       virtual void Invalidate() = 0;
     };
-    
-    template<typename T>
-    struct NodeSharedBlock;
 
     template<typename T>
     struct NodeSharedBlock : public NodeSharedBlockBase
@@ -58,6 +42,42 @@ namespace dependency
       std::list<std::weak_ptr<ValueSharedBlockBase>> values_bind_to_me;
     };
 
+    template<typename T>
+    T Transform(std::weak_ptr<NodeSharedBlockBase> ptr) {
+      if (ptr.expired()) {
+        return T();
+      }
+      std::shared_ptr<NodeSharedBlockBase> ptr_locked = ptr.lock();
+      std::shared_ptr<NodeSharedBlock<T>> node_shared_block_typed =
+        std::dynamic_pointer_cast<NodeSharedBlock<T>>(ptr_locked);
+      return node_shared_block_typed->value;
+    }
+    
+    template <class R, typename... T, std::size_t... I>
+    R ExpandInvoke(
+      const std::function<R(const T&...)>& function,
+      const std::array<std::weak_ptr<NodeSharedBlockBase>, sizeof...(I)>& t,
+      std::index_sequence<I...>
+    )
+    {
+      return function(Transform<std::tuple_element_t<I, std::tuple<T...>>>(t[I])...);
+    }
+
+    template<typename R, typename... T>
+    R Invoke(
+      const std::function<R(const T&...)>& function,
+      const std::array<std::weak_ptr<NodeSharedBlockBase>, sizeof...(T)>& arguments
+    ) {
+      return ExpandInvoke(
+        function,
+        arguments,
+        std::make_index_sequence<sizeof...(T)>{}
+      );
+    }
+
+    template<typename T>
+    struct NodeSharedBlock;
+
     template<typename... T>
     void SetTupleElement(size_t i, std::tuple<T...>& tuple, std::shared_ptr<NodeSharedBlockBase> node_base) {
       switch (i) {
@@ -75,10 +95,10 @@ namespace dependency
 
     template<typename T, typename... N>
     struct ValueSharedBlock : public ValueSharedBlockBase {
-      ValueSharedBlock(T default_value, std::function<T(const N&...)> calculator)
+      ValueSharedBlock(const T& default_value, const std::function<T(const N&...)>& calculator)
         : value(default_value)
         , is_valid(true)
-        , node_shared_block(sizeof...(N))
+        , node_shared_block()
         , calculator(calculator) {
 
       }
@@ -91,26 +111,14 @@ namespace dependency
         if (is_valid) {
           return value;
         }
-        std::tuple<N...> arguments;
-        for (
-          int index = 0;
-          index < node_shared_block.size();
-          ++index
-        ) {
-          SetTupleElement(index, arguments, node_shared_block[index].lock());
-        }
-        apply(
-          [this](const N&... args) {
-            value = this->calculator(args...);
-          },
-          arguments
-        );
+        value = Invoke<T, N...>(calculator, node_shared_block);
+        is_valid = true;
         return value;
       }
 
       T value;
       bool is_valid;
-      std::vector<std::weak_ptr<NodeSharedBlockBase>> node_shared_block;
+      std::array<std::weak_ptr<NodeSharedBlockBase>, sizeof...(N)> node_shared_block;
       std::function<T(const N&...)> calculator;
     };
   }
@@ -139,16 +147,17 @@ namespace dependency
   template<typename T, typename... N>
   class Value {
   public:
-    Value(T default_value, std::function<T(const N&...)> calculator)
+    Value(const T& default_value, const std::function<T(const N&...)>& calculator)
       : shared_block_(std::make_shared<detail::ValueSharedBlock<T, N...>>(default_value, calculator))
     {
 
     }
 
     template<size_t index>
-    void Bind(const Node<std::tuple_element_t<index, std::tuple<N...>>>& node) {
+    Value& Bind(const Node<std::tuple_element_t<index, std::tuple<N...>>>& node) {
       shared_block_->node_shared_block[index] = node.shared_block_;
       node.shared_block_->values_bind_to_me.push_back(shared_block_);
+      return *this;
     }
 
     T GetValue() const {
