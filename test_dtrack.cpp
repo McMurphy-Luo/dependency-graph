@@ -3,22 +3,30 @@
 #include "catch.hpp"
 #include "dtrack.h"
 
-std::string Calculator(const int& input, const std::string& test_string) {
-  std::string result;
-  result = test_string;
-  result += input;
-  return result;
+int Calculator(const int& input) {
+  return input + 1;
+}
+
+TEST_CASE("Test one node and one value bind") {
+  dtrack::DNode<int> test_node(5);
+  dtrack::DValue<int, int> test_value(0, &Calculator);
+  CHECK(test_value.Value() == 0);
+  test_value.Bind<0>(test_node);
+  CHECK(test_value.Value() == 6);
+  test_node.SetValue(10);
+  CHECK(test_value.Value() == 11);
 }
 
 int main(int argc, char* argv[]) {
-  std::cout << "Test" << std::endl;
-  dtrack::Node<int> test_node(5);
-  std::function<std::string(int, std::string)> fuck = Calculator;
-  dtrack::Value<std::string, int, std::string> test_value("Fuck", &Calculator);
-  std::string test_1 = "123";
-  std::string const& test = test_1;
-  test_value.Bind<0>(test_node);
-  test_node.SetValue(10);
-  assert(test_value.GetValue() == "100");
-  return 0;
+  printf("Running main() from %s\n", __FILE__);
+  int flag = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
+  flag |= _CRTDBG_LEAK_CHECK_DF;
+  flag |= _CRTDBG_ALLOC_MEM_DF;
+  _CrtSetDbgFlag(flag);
+  _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+  _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
+  _CrtSetBreakAlloc(-1);
+  int result = Catch::Session().run(argc, argv);
+  std::getchar();
+  return result;
 }
