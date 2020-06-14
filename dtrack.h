@@ -1,5 +1,5 @@
-#ifndef DEPENDENCY_GRAPH_NODE_
-#define DEPENDENCY_GRAPH_NODE_
+#ifndef DTRACK_
+#define DTRACK_
 
 #include <functional>
 #include <utility>
@@ -161,4 +161,4 @@ namespace dtrack
   };
 }
 
-#endif // DEPENDENCY_GRAPH_NODE_
+#endif // DTRACK_
