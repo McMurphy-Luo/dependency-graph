@@ -8,10 +8,10 @@ int Calculator(const int& input) {
 }
 
 TEST_CASE("Test one node and one value bind") {
-  dtrack::DNode<int> test_node(5);
-  dtrack::DValue<int, int> test_value(0, &Calculator);
+  dtrack::DValue<int> test_node(5);
+  dtrack::DTracker<int, int> test_value(0, &Calculator);
   CHECK(test_value.Value() == 0);
-  test_value.Bind<0>(test_node);
+  test_value.Watch<0>(test_node);
   CHECK(test_value.Value() == 6);
   test_node.SetValue(10);
   CHECK(test_value.Value() == 11);
