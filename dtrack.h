@@ -15,69 +15,133 @@ namespace dtrack
 {
   namespace detail
   {
+    bool CheckBit(uintptr_t bits)
+    {
+      return bits && !(bits & (bits - 1));
+    }
+
     template<size_t N>
-    struct FirstSetBit {
+    struct FirstSetBitForward {
 
     };
 
     template<>
-    struct FirstSetBit<sizeof(unsigned long)> {
-      size_t operator()(unsigned long value) {
-        return 0;
+    struct FirstSetBitForward<sizeof(unsigned long)> {
+      std::tuple<bool, size_t> operator()(unsigned long value) {
+        unsigned long index;
+        if (_BitScanForward(
+          &index,
+          value
+        )) {
+          return std::make_tuple(true, index);
+        }
+        return std::make_tuple(false, 0);
       }
     };
 
     template<>
-    struct FirstSetBit<sizeof(unsigned __int64)> {
-      size_t operator()(unsigned __int64) {
-        return 0;
+    struct FirstSetBitForward<sizeof(unsigned __int64)> {
+      std::tuple<bool, size_t> operator()(unsigned __int64 value) {
+        unsigned long index;
+        if (_BitScanForward64(
+          &index,
+          value
+        )) {
+          return std::make_tuple(true, index);
+        }
+        return std::make_tuple(false, 0);
+      }
+    };
+
+    template<size_t N>
+    struct FirstSetBitReverse {
+
+    };
+
+    template<>
+    struct FirstSetBitReverse<sizeof(unsigned long)> {
+      std::tuple<bool, size_t> operator()(unsigned long value) {
+        unsigned long index;
+        if (_BitScanReverse(
+          &index,
+          value
+        )) {
+          return std::make_tuple(true, index);
+        }
+        return std::make_tuple(false, 0);
+      }
+    };
+
+    template<>
+    struct FirstSetBitReverse<sizeof(unsigned __int64)> {
+      std::tuple<bool, size_t> operator()(unsigned __int64 value) {
+        unsigned long index;
+        if (_BitScanReverse64(
+          &index,
+          value
+        )) {
+          return std::make_tuple(true, index);
+        }
+        return std::make_tuple(false, 0);
       }
     };
 
     class GlobalBlock;
+    class Tracker;
 
-    class TrackableBase {
-
-    };
-
-    template<typename T>
-    class Trackable : public TrackableBase {
-    public:
-      Trackable(const std::shared_ptr<GlobalBlock>& global_block, const T& default_value)
-        : global_block_;
-        , value_;
-        , positions_; {
-
-      }
-
-      void Invalidate() {
-
-      }
-
-      void Track(const std::tuple<size_t, uintptr_t>& position) {
-
-      }
-
-      void StopTrack(const std::tuple<size_t, uintptr_t>& position) {
-        
-      }
-
-      void SetValue(const T& value) {
-        if (value_ == value) {
-          return;
+    struct PositionComparator {
+      bool operator() (
+        const std::tuple<size_t, uintptr_t>& lhs,
+        const std::tuple<size_t, uintptr_t>& rhs
+      ) const {
+        if (
+          (
+            std::get<1>(lhs)
+            ==
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+          &&
+          (
+            std::get<1>(rhs)
+            ==
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+        ) {
+          return std::get<0>(lhs) < std::get<1>(rhs);
         }
-        value_ = value;
-        Invalidate();
+
+        if (
+          (
+            std::get<1>(lhs)
+            ==
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+          &&
+          (
+            std::get<1>(rhs)
+            !=
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+        ) {
+          return false;
+        }
+        if (
+          (
+            std::get<1>(lhs)
+            !=
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+          &&
+          (
+            std::get<1>(rhs)
+            ==
+            std::numeric_limits<std::tuple_element_t<1, std::tuple<size_t, uintptr_t>>>::max()
+          )
+        ) {
+          return true;
+        }
+        return std::get<0>(lhs) < std::get<1>(rhs);
       }
-
-      virtual T Value() = 0;
-
-      std::shared_ptr<GlobalBlock> GlobalBlock() { return global_block_; }
-
-    private:
-      std::shared_ptr<GlobalBlock> global_block_;
-      T value_;
-      std::list<std::tuple<size_t, uintptr_t>> positions_;
     };
 
     class GlobalBlock {
@@ -93,9 +157,9 @@ namespace dtrack
 
       GlobalBlock& operator=(const GlobalBlock& another) = delete;
 
-      std::tuple<size_t, uintptr_t> AllocateTracker(const std::shared_ptr<TrackerSharedBlockBase>& tracker);
+      void AllocateTracker(const std::shared_ptr<Tracker>& tracker);
 
-      void FreeTracker(const std::shared_ptr<TrackerSharedBlockBase>& tracker);
+      void FreeTracker(const std::shared_ptr<Tracker>& tracker);
 
       void Apply();
 
@@ -106,65 +170,134 @@ namespace dtrack
       bool IsTrackerValid(const std::tuple<size_t, uintptr_t>& tracker_position);
 
     private:
-      std::set<std::tuple<size_t, uintptr_t>> trackers_position_;
+      std::set<std::tuple<size_t, uintptr_t>, PositionComparator> trackers_position_;
       std::vector<uintptr_t> trackers_validation_status_;
-      std::map<size_t, std::array<std::weak_ptr<TrackerSharedBlockBase>, sizeof(uintptr_t)>> trackers_;
+      std::unordered_map<size_t, std::array<std::weak_ptr<Tracker>, sizeof(uintptr_t) * CHAR_BIT>> trackers_;
     };
 
-    void ValueSharedBlockBase::Invalidate() {
-      for (
-        std::list<std::tuple<size_t, uintptr_t>>::iterator it = trackers_position.begin();
-        it != trackers_position.end();
-        ++it
-        ) {
-        global_block->CommitInvalidatedTracker(*it);
-      }
-    }
-
-    template<typename T>
-    struct ValueSharedBlock : public Trackable<T> {
-      ValueSharedBlock(const std::shared_ptr<GlobalBlock>& global_block, const T& default_value)
-        : ValueSharedBlockBase(global_block)
-        , value(default_value) {
+    class Trackable {
+    public:
+      Trackable(const std::shared_ptr<GlobalBlock>& global_block)
+        : global_block_(global_block)
+        , tracked_positions_() {
 
       }
-      
-      T value;
+
+      virtual ~Trackable() {
+
+      }
+
+      void Invalidate() {
+        for (
+          std::unordered_map<size_t, uintptr_t>::iterator it = tracked_positions_.begin();
+          it != tracked_positions_.end();
+          ++it
+          ) {
+          global_block_->CommitInvalidatedTracker(*it);
+        }
+      }
+
+      void Track(const std::tuple<size_t, uintptr_t>& position) {
+        CheckBit(std::get<1>(position));
+        std::unordered_map<size_t, uintptr_t>::iterator it = tracked_positions_.find(std::get<0>(position));
+        if (it == tracked_positions_.end()) {
+          tracked_positions_.emplace(std::get<0>(position), std::get<1>(position)).first;
+          return;
+        }
+        it->second = it->second | std::get<1>(position);
+      }
+
+      void StopTrack(const std::tuple<size_t, uintptr_t>& position) {
+
+      }
+
+    private:
+      std::shared_ptr<GlobalBlock> global_block_;
+      std::unordered_map<size_t, uintptr_t> tracked_positions_;
     };
 
     template<typename T>
-    std::shared_ptr<ValueSharedBlock<T>> Transform(std::weak_ptr<ValueSharedBlockBase> ptr) {
+    class TrackableValue : public Trackable {
+    public:
+      TrackableValue(const std::shared_ptr<GlobalBlock>& global_block, const T& default_value)
+        : Trackable(global_block)
+        , value_(default_value) {
+
+      }
+
+      T Value() const { return value_; }
+
+      T& ValueRef() { return value_; }
+
+      const T& ValueRef() const { return value_; }
+
+      void SetValue(const T& new_value) {
+        if (value_ != new_value) {
+          value_ = new_value;
+          Invalidate();
+        }
+      }
+
+    private:
+      T value_;
+    };
+
+    class Tracker {
+    public:
+      Tracker(const std::shared_ptr<GlobalBlock>& global_block)
+        : global_block_(global_block)
+        , position_() {
+
+      }
+
+      bool IsValid() {
+        return global_block_->IsTrackerValid(position_);
+      }
+
+      virtual void NotifyInvalidated() = 0;
+
+      std::tuple<size_t, uintptr_t> Position() { return position_; }
+
+      void SetPosition(const std::tuple<size_t, uintptr_t>& new_position) { position_ = new_position; }
+
+    private:
+      std::shared_ptr<GlobalBlock> global_block_;
+      std::tuple<size_t, uintptr_t> position_;
+    };
+
+    template<typename T>
+    std::shared_ptr<TrackableValue<T>> Transform(std::weak_ptr<Trackable> ptr) {
       if (ptr.expired()) {
-        return std::shared_ptr<ValueSharedBlock<T>>();
+        return std::shared_ptr<TrackableValue<T>>();
       }
-      std::shared_ptr<ValueSharedBlockBase> ptr_locked = ptr.lock();
-      return std::dynamic_pointer_cast<ValueSharedBlock<T>>(ptr_locked);
+      std::shared_ptr<Trackable> ptr_locked = ptr.lock();
+      return std::dynamic_pointer_cast<TrackableValue<T>>(ptr_locked);
     }
 
     template<typename R, typename... T>
     R InvokeImpl(
       const std::function<R(const T&...)>& function,
-      const std::shared_ptr<ValueSharedBlock<T>>&... args
+      const std::shared_ptr<TrackableValue<T>>&... args
     ) {
-      return function((args ? args->value : T())...);
+      return function((args ? args->ValueRef() : T())...);
     }
 
     template <typename R, typename... T, std::size_t... I>
     R ExpandInvoke(
       const std::function<R(const T&...)>& function,
-      const std::array<std::weak_ptr<ValueSharedBlockBase>, sizeof...(I)>& t,
+      const std::array<std::weak_ptr<Trackable>, sizeof...(I)>& t,
       std::index_sequence<I...>
     ) {
       return InvokeImpl<R, T...>(
         function,
         Transform<std::tuple_element_t<I, std::tuple<T...>>>(t[I])...
-      );
+        );
     }
 
     template<typename R, typename... T>
     R Invoke(
       const std::function<R(const T&...)>& function,
-      const std::array<std::weak_ptr<ValueSharedBlockBase>, sizeof...(T)>& arguments
+      const std::array<std::weak_ptr<Trackable>, sizeof...(T)>& arguments
     ) {
       return ExpandInvoke(
         function,
@@ -174,42 +307,110 @@ namespace dtrack
     }
 
     template<typename T, typename... N>
-    class TrackerSharedBlock : public Trackable<T> {
-      TrackerSharedBlock(const std::shared_ptr<GlobalBlock>& global_block, const T& default_value, const std::function<T(const N&...)>& calculator)
-        : TrackerSharedBlockBase(global_block)
-        , value(default_value)
-        , values()
-        , calculator(calculator) {
+    class TrackerSharedBlock : public Tracker {
+    public:
+      TrackerSharedBlock(
+        const std::shared_ptr<GlobalBlock>& global_block,
+        const T& default_value,
+        const std::function<T(const N&...)>& calculator
+      )
+        : Tracker(global_block)
+        , tracked_value_(std::make_shared<TrackableValue<T>>(global_block, default_value))
+        , tracking_values_()
+        , calculator_(calculator) {
+
+      }
+
+      virtual void NotifyInvalidated() override {
 
       }
 
       template<size_t index>
-      void Bind(const std::shared_ptr<ValueSharedBlock<std::tuple_element_t<index, std::tuple<N...>>>> value) {
-        values[index] = value;
-        value->trackers_position.push_back(position);
-        global_block->CommitValidatedTracker(position);
+      void Watch(const std::shared_ptr<TrackableValue<std::tuple_element_t<index, std::tuple<N...>>>>& value) {
+        tracking_values_[index] = value;
+        value->Track(Position());
       }
 
-      virtual T Value() {
-        if (global_block->IsTrackerValid(position)) {
-          return value;
+      T Value() {
+        if (!IsValid()) {
+          tracked_value_->SetValue(Invoke<T, N...>(calculator_, tracking_values_));
         }
-        value = Invoke<T, N...>(calculator, values);
-        global_block->CommitValidatedTracker(position);
-        return value;
+        return tracked_value_->Value();
       }
 
-      T value;
-      std::array<std::weak_ptr<ValueSharedBlockBase>, sizeof...(N)> values;
-      std::function<T(const N&...)> calculator;
+      void Apply() {
+        tracked_value_->SetValue(Invoke<T, N...>(calculator_, tracking_values_));
+      }
+
+      T& ValueRef() {
+        if (!IsValid()) {
+          tracked_value_->SetValue(Invoke<T, N...>(calculator_, tracking_values_));
+        }
+        return tracked_value_->ValueRef();
+      }
+
+      const T& ValueRef() const {
+        if (!IsValid()) {
+          tracked_value_->SetValue(Invoke<T, N...>(calculator_, tracking_values_));
+        }
+        return tracked_value_->ValueRef();
+      }
+
+    private:
+      std::shared_ptr<TrackableValue<T>> tracked_value_;
+      std::array<std::weak_ptr<Trackable>, sizeof...(N)> tracking_values_;
+      std::function<T(const N&...)> calculator_;
     };
 
-    std::tuple<size_t, uintptr_t>
-      GlobalBlock::AllocateTracker(const std::shared_ptr<TrackerSharedBlockBase>& tracker) {
-      return std::make_tuple(0, 0);
+    void GlobalBlock::AllocateTracker(const std::shared_ptr<Tracker>& tracker) {
+      if (trackers_position_.empty()) {
+        assert(trackers_.empty());
+        std::tuple<size_t, uintptr_t> new_position;
+        std::get<0>(new_position) = 0;
+        std::get<1>(new_position) = 1;
+        tracker->SetPosition(new_position);
+        trackers_position_.emplace(0, 1);
+        std::array<std::weak_ptr<Tracker>, sizeof(uintptr_t) * CHAR_BIT> tracker_container;
+        tracker_container[0] = tracker;
+        trackers_.emplace(0, tracker_container);
+        return;
+      }
+      std::tuple<size_t, uintptr_t> first_tracker_position = *(trackers_position_.begin());
+      if (
+        std::get<1>(first_tracker_position)
+        ==
+        std::numeric_limits<
+          std::tuple_element_t<
+            1,
+            std::tuple<size_t, uintptr_t>
+          >
+        >::max()
+      ) {
+        std::tuple<size_t, uintptr_t> last_tracker_position = *trackers_position_.rbegin();
+        std::tuple<size_t, uintptr_t> new_tracker_position;
+        std::get<0>(new_tracker_position) = std::get<0>(last_tracker_position) + 1;
+        std::get<1>(new_tracker_position) = 1;
+        tracker->SetPosition(new_tracker_position);
+        trackers_position_.insert(new_tracker_position);
+        std::array<std::weak_ptr<Tracker>, sizeof(uintptr_t)* CHAR_BIT> new_trackers;
+        new_trackers[0] = tracker;
+        trackers_.emplace(std::get<0>(new_tracker_position), new_trackers);
+        return;
+      }
+      uintptr_t already_occupied_position = std::get<1>(first_tracker_position);
+      trackers_position_.erase(trackers_position_.begin());
+      trackers_position_.emplace(std::get<0>(first_tracker_position), (already_occupied_position << 1) | 1);
+      std::tuple<size_t, uintptr_t> new_trackers_position;
+      std::get<0>(new_trackers_position) = std::get<0>(first_tracker_position);
+      std::get<1>(new_trackers_position) = already_occupied_position + 1;
+      tracker->SetPosition(new_trackers_position);
+      FirstSetBitReverse<sizeof(uintptr_t)> scaner;
+      std::tuple<bool, size_t> bit_position = scaner(std::get<1>(new_trackers_position));
+      assert(std::get<0>(bit_position));
+      trackers_[std::get<0>(new_trackers_position)][std::get<1>(bit_position)] = tracker;
     }
 
-    void GlobalBlock::FreeTracker(const std::shared_ptr<TrackerSharedBlockBase>& tracker) {
+    void GlobalBlock::FreeTracker(const std::shared_ptr<Tracker>& tracker) {
 
     }
 
@@ -222,11 +423,20 @@ namespace dtrack
     }
 
     void GlobalBlock::CommitInvalidatedTracker(const std::tuple<size_t, uintptr_t>& tracker_position) {
-
+      assert(CheckBit(std::get<1>(tracker_position)));
+      if (trackers_validation_status_.size() <= std::get<0>(tracker_position)) {
+        trackers_validation_status_.resize(std::get<0>(tracker_position) + 1, 0);
+      }
+      trackers_validation_status_[std::get<0>(tracker_position)] =
+        trackers_validation_status_[std::get<0>(tracker_position)] | std::get<1>(tracker_position);
     }
 
     bool GlobalBlock::IsTrackerValid(const std::tuple<size_t, uintptr_t>& tracker_position) {
-      return false;
+      if (std::get<0>(tracker_position) >= trackers_validation_status_.size()) {
+        return true;
+      }
+      assert(CheckBit(std::get<1>(tracker_position)));
+      return trackers_validation_status_.at(std::get<0>(tracker_position)) ^ std::get<1>(tracker_position);
     }
 
     std::shared_ptr<GlobalBlock> GetGlobalBlock() {
@@ -244,21 +454,22 @@ namespace dtrack
   class DValue {
   public:
     DValue(const T& default_value)
-      : shared_block_(std::make_shared<detail::ValueSharedBlock<T>>(detail::GetGlobalBlock(), default_value)) {
+      : tracked_value_(std::make_shared<detail::TrackableValue<T>>(detail::GetGlobalBlock(), default_value)) {
 
     }
 
     void SetValue(T value) {
-      if (shared_block_->value != value) {
-        shared_block_->value = value;
-        shared_block_->Invalidate();
-      }
+      tracked_value_->SetValue(value);
     }
 
-    T Value() { return shared_block_->value; }
+    T Value() { return tracked_value_->Value(); }
+
+    T& ValueRef() { return tracked_value_->ValueRef(); }
+
+    const T& ValueRef() const { return tracked_value_->ValueRef(); }
 
   public:
-    std::shared_ptr<detail::ValueSharedBlock<T>> shared_block_;
+    std::shared_ptr<detail::TrackableValue<T>> tracked_value_;
   };
 
   template<typename T>
@@ -276,18 +487,18 @@ namespace dtrack
     DTracker(const T& default_value, const std::function<T(const N&...)>& calculator)
       : shared_block_(std::make_shared<detail::TrackerSharedBlock<T, N...>>(detail::GetGlobalBlock(), default_value, calculator))
     {
-
+      detail::GetGlobalBlock()->AllocateTracker(shared_block_);
     }
 
     template<size_t index>
     DTracker& Watch(const DValue<std::tuple_element_t<index, std::tuple<N...>>>& value) {
-      shared_block_->Bind<index>(value.shared_block_);
+      shared_block_->Watch<index>(value.tracked_value_);
       return *this;
     }
 
     template<size_t index>
     DTracker& Watch(const DTracker<std::tuple_element_t<index, std::tuple<N...>>>& tracker) {
-      shared_block_->Bind<index>(tracker.shared_block_);
+      shared_block_->Watch<index>(tracker.tracked_value_);
       return *this;
     }
 
@@ -297,7 +508,7 @@ namespace dtrack
     }
 
     void Apply() {
-
+      shared_block_->Apply();
     }
 
     T Value() {
